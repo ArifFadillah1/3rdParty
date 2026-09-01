@@ -60,16 +60,14 @@ app_content_dic = {
         "region": "id",
         "package_name": "com.shopee.id",
         "app_title": "8.8 Shopee Live Maraton",
-        "default_language": "IND",
-        "language": ["IND"]
+        "default_language": "IND"
     },
     "000004313569": {
         "bundle": f"shopee-thailand-release-samsung-{_ver('th')}.apk",
         "region": "th",
         "package_name": "com.shopee.th",
         "app_title": "Shopee TH : ช้อปออนไลน์สุดคุ้ม",
-        "default_language": "THA",
-        "language": ["ENG"]
+        "default_language": "THA"
     },
     "000004313596": {
         "bundle": f"shopee-malaysia-release-samsung-{_ver('my')}.apk",
