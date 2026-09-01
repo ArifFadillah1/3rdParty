@@ -19,11 +19,21 @@ if [ "$(git rev-parse 'github-main^{tree}')" = "$tree" ]; then
 fi
 
 # The last synced main commit is recorded as a Synced-from trailer, so the
-# snapshot message can list every main commit it covers.
+# snapshot message can cover exactly the main commits synced since. The usual
+# case is one commit (the post-commit hook runs per commit), and its message
+# is reused verbatim so the GitHub history reads like the real one; a
+# multi-commit catch-up gets a summary subject with one bullet per commit.
 prev=$(git log -1 github-main --pretty=%B | sed -n 's/^Synced-from: //p')
-subjects=$(git log --reverse --pretty='- %s' ${prev:+$prev..}main)
+count=$(git rev-list --count ${prev:+$prev..}main)
 
-new=$(printf 'Sync from local main\n\n%s\n\nSynced-from: %s' \
-      "$subjects" "$main_sha" | git commit-tree -p github-main "$tree")
+if [ "$count" -eq 1 ]; then
+    msg=$(git log -1 --pretty=%B main)
+else
+    msg=$(printf 'Sync %s commits from local main\n\n%s' \
+          "$count" "$(git log --reverse --pretty='- %s' ${prev:+$prev..}main)")
+fi
+
+new=$(printf '%s\n\nSynced-from: %s' \
+      "$msg" "$main_sha" | git commit-tree -p github-main "$tree")
 git update-ref refs/heads/github-main "$new"
 git push github github-main:main
