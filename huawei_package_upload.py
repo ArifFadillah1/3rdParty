@@ -71,7 +71,7 @@ accounts = [
             "101018311": {"region": "id", "bundle": f"shopee-indonesia-release-huawei-{_ver('id')}.{suffix}", "langs": ["id"], "package_name": "com.shopee.id"},
             "100576469": {"region": "my", "bundle": f"shopee-malaysia-release-huawei-{_ver('my')}.{suffix}", "langs": ["en-US"], "package_name": "com.shopee.my"},
             "101433653": {"region": "vn", "bundle": f"shopee-vietnam-release-huawei-{_ver('vn')}.{suffix}", "langs": ["vi"], "package_name": "com.shopee.vn"},
-            "100914881": {"region": "tw", "bundle": f"shopee-taiwan-release-huawei-{_ver('tw')}.{suffix}", "langs": ["zh-TW"], "package_name": "com.shopee.tw"},
+            "100914881": {"region": "tw", "bundle": f"shopee-taiwan-release-huawei-{_ver('tw')}.{suffix}", "langs": ["zh-TW"], "package_name": "com.shopee.tw", "app_name": "蝦皮購物 | 花得更少買得更好"},
             "100706415": {"region": "ph", "bundle": f"shopee-philipines-release-huawei-{_ver('ph')}.{suffix}", "langs": ["en-US"], "package_name": "com.shopee.ph"},
             "100936781": {"region": "sg", "bundle": f"shopee-singapore-release-huawei-{_ver('sg')}.{suffix}", "langs": ["en-US"], "package_name": "com.shopee.sg"},
             "100447193": {"region": "th", "bundle": f"shopee-thailand-release-huawei-{_ver('th')}.{suffix}", "langs": ["th", "en-US"], "package_name": "com.shopee.th"},
@@ -233,8 +233,8 @@ for account in accounts:
                     # listing.txt titles are Google Play titles, which carry
                     # campaign names ("Shopee 8.8 Merdeka Sale") that go stale
                     # between upload and Huawei's approval. Off by default, so
-                    # AppGallery keeps the stable name it has today.
-                    app_name = "蝦皮購物 | 花得更少買得更好" if package_name.endswith(".tw") else "Shopee"
+                    # AppGallery keeps the stable name from app_id_dic.
+                    app_name = app_id_dic[app_id].get("app_name", "Shopee")
                     if USE_LISTING_TITLE:
                         app_name = (lang_listing.get("title") or "").strip() or app_name
                     payload = json.dumps({
@@ -260,14 +260,11 @@ for account in accounts:
 
                         if os.path.isfile(f) and lang in filename and "icon" in filename:
 
-                            file_full_path = Path(f)
-                            file_extension = file_full_path.suffix
                             # NOTE: Huawei support suggested ".../upload-url/icon", but that path
                             # returns 404 — it does not exist in the API. The documented endpoint
                             # is the generic /upload-url (same one used for the APK bundle).
                             upload_url_req = "https://connect-api.cloud.huawei.com/api/publish/v2/upload-url?appId=" + app_id + "&suffix=png"
                             print(f"  Icon  {filename}")
-                            print(f"    [1] GET {upload_url_req}")
 
                             headers = {
                                 'client_id': client_id,
@@ -275,14 +272,12 @@ for account in accounts:
                             }
 
                             response = requests.request("GET", upload_url_req, headers=headers)
-                            print(f"    [1] Response {response.status_code}: {response.text[:300]}")
                             response.raise_for_status()
                             check_huawei_api(response)
 
                             upload_url = response.json()["uploadUrl"]
                             upload_auth_code = response.json()["authCode"]
 
-                            print(f"    [2] POST {upload_url[:80]}")
                             payload = {'authCode': upload_auth_code,
                                        'fileCount': '1',
                                        'parseType': '1'}
@@ -290,7 +285,6 @@ for account in accounts:
                                 files = [('file', (filename, icon_fh, 'application/octet-stream'))]
                                 response = requests.request("POST", upload_url, headers={}, data=payload, files=files)
                             response.raise_for_status()
-                            print(f"    [2] Response: {response.text[:500]}")
 
                             rsp = response.json()["result"]["UploadFileRsp"]
                             if rsp["ifSuccess"] == 1:
@@ -312,8 +306,6 @@ for account in accounts:
                                     }],
                                     "lang": lang
                                 }
-                                print(f"    [3] PUT {link_url}")
-                                print(f"    [3] Body: {json.dumps(link_payload)[:500]}")
                                 headers = {
                                     'client_id': client_id,
                                     'Content-Type': 'application/json',
@@ -322,7 +314,6 @@ for account in accounts:
 
                                 response = requests.request("PUT", link_url, headers=headers, data=json.dumps(link_payload))
                                 response.raise_for_status()
-                                print(f"    [3] Response: {response.text[:300]}")
                                 ret = response.json().get("ret", {})
                                 if ret.get("code", 0) == 0:
                                     print(f"  Icon .. OK ({file_resolution})")
