@@ -377,7 +377,13 @@ for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
         lang_listing = next(e for e in listing_data.get("listings", [])
                             if e.get("language") == default_language_google)
 
-        app_title = lang_listing["title"]
+        # The ARP/RMS app name ships when this release provides one; a release
+        # without a title keeps the fallback above, so an empty listing can
+        # never blank the store name.
+        listing_title = (lang_listing.get("title") or "").strip()
+        if listing_title:
+            app_title = listing_title
+        print(f"  Title  {app_title}")
         app_desc = lang_listing.get("fullDescription", "").replace("--", "==")
         short_desc = lang_listing.get("shortDescription")
         if isinstance(short_desc, str):
