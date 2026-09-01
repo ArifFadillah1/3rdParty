@@ -1,0 +1,8 @@
+*.json
+*_private_key.txt
+credentials.py
+.env
+.DS_Store
+__pycache__/
+*.pyc
+huawei_package_upload_backup.py
