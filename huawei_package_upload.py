@@ -33,8 +33,16 @@ STORE_DIR = "HUAWEI"
 parser = argparse.ArgumentParser(
     description="Upload Shopee builds and marketing materials to Huawei AppGallery.")
 release_config.add_release_args(parser)
+_submit = parser.add_mutually_exclusive_group()
+_submit.add_argument("--submit", dest="submit", action="store_true", default=None,
+                     help=f"submit for review after upload (default: {AUTO_SUBMIT}, "
+                          f"from AUTO_SUBMIT in this script)")
+_submit.add_argument("--no-submit", dest="submit", action="store_false",
+                     help="upload only, do not submit")
 args = parser.parse_args()
 release_config.apply_args(args)
+if args.submit is not None:
+    AUTO_SUBMIT = args.submit
 
 file_path = release_config.root()
 app_version = release_config.VERSION

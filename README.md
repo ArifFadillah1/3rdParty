@@ -67,6 +67,15 @@ Every script accepts the same overrides for a one-off run without editing
 --dry-run             print the plan and preflight result, upload nothing
 ```
 
+The uploaders additionally take `--submit` / `--no-submit` to override each
+script's `AUTO_SUBMIT` default. Combined with `--regions` this gives
+per-region submit control:
+
+```bash
+python3 samsung_package_upload.py --no-submit               # upload all, submit nothing
+python3 samsung_package_upload.py --regions id,th --submit  # then submit just id+th
+```
+
 An unknown region code aborts the run; a region the store simply doesn't carry
 is reported and skipped. Preflight runs on every real run too — if any selected
 region is missing an APK, icon, screenshots or listing text, nothing at all is
