@@ -15,7 +15,7 @@ internal App Release platform (RMS).
 
 ## One-time setup
 
-1. Python 3 with: `pip3 install requests PyJWT cryptography tqdm`
+1. Python 3 with: `pip3 install -r requirements.txt`
 2. Create `credentials.py` next to the scripts (gitignored — never commit it):
 
    ```python
