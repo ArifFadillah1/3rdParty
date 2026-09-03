@@ -9,7 +9,7 @@ internal App Release platform (RMS).
 | Script | What it does |
 |---|---|
 | `release_config.py` | Shared config: cycle, version, paths, regions. Edit `CYCLE` and `VERSION` here once per release. Not run directly. |
-| `retrieve_rms_materials.py` | Downloads icons, screenshots and listing text for a cycle from RMS into the release folder. |
+| `retrieve_rms_materials.py` | Downloads icons, screenshots and listing text for a cycle from RMS into the release folder; also writes 480x854 screenshot copies for OPPO/Transsion. |
 | `huawei_package_upload.py` | Uploads APKs + materials to Huawei AppGallery (8 regions, 2 accounts). |
 | `samsung_package_upload.py` | Uploads APKs + materials to Samsung Galaxy Store (7 regions). |
 
@@ -46,9 +46,7 @@ internal App Release platform (RMS).
 # 2. Pull marketing materials from RMS into the release folder
 python3 retrieve_rms_materials.py --dry-run   # see what has publishable material
 python3 retrieve_rms_materials.py
-# Also writes Manual_480x854_<cycle>/ — screenshots resized for the OPPO and
-# Transsion manual submission forms (--no-resize skips). Originals untouched;
-# the uploaders never auto-discover the resized folder.
+# Also writes Manual_480x854_<cycle>/ for OPPO/Transsion (see per-store notes)
 
 # 3. Preflight each store — checks APKs and materials, uploads nothing
 python3 huawei_package_upload.py --dry-run
@@ -91,6 +89,10 @@ uploaded.
   (`USE_LISTING_TITLE = False`) because listing titles carry campaign names.
 - **Samsung**: `AUTO_SUBMIT` is **on** by default — a real run submits for
   review. Only each app's `default_language` listing is pushed.
+- **OPPO / Transsion**: no public API — submit manually in each store's web
+  form, using the 480x854 screenshots from `Manual_480x854_<cycle>/` that the
+  retrieval step writes automatically (`--no-resize` skips them). Originals
+  stay untouched and the uploaders never auto-discover the resized folder.
 - **RMS cookie expired?** A run stops with "Unauthorized". Log in to
   app-release.shopee.io, copy the fresh `RMS_AUTH` cookie from DevTools into
   `credentials.py`.
