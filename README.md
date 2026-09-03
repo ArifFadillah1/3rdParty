@@ -46,6 +46,9 @@ internal App Release platform (RMS).
 # 2. Pull marketing materials from RMS into the release folder
 python3 retrieve_rms_materials.py --dry-run   # see what has publishable material
 python3 retrieve_rms_materials.py
+# Also writes Manual_480x854_<cycle>/ — screenshots resized for the OPPO and
+# Transsion manual submission forms (--no-resize skips). Originals untouched;
+# the uploaders never auto-discover the resized folder.
 
 # 3. Preflight each store — checks APKs and materials, uploads nothing
 python3 huawei_package_upload.py --dry-run

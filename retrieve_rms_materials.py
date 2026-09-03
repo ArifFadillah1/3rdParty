@@ -16,6 +16,10 @@ Output:
         <lang>_icon_1.png
         <lang>_phoneScreenshots_<n>.jpeg
         <lang>_featureGraphic_1.jpeg
+    <out>/Manual_480x854_<cycle>/com.shopee.<region>/
+        <lang>_phoneScreenshots_<n>.jpeg  (screenshots resized for the OPPO and
+                                           Transsion manual submission forms;
+                                           originals untouched, --no-resize skips)
 
 <out> defaults to this release's folder, which is where the upload scripts look
 for materials, so a normal run needs no copying afterwards.
@@ -32,12 +36,18 @@ app-release.shopee.io; the cookie is a JWT valid ~30 days).
 """
 
 import argparse
+import io
 import json
 import os
 import sys
 
 import requests
 from requests.utils import requote_uri
+
+try:
+    from PIL import Image, ImageOps
+except ImportError:
+    Image = None
 
 import release_config
 from credentials import RMS_AUTH_COOKIE
@@ -49,6 +59,13 @@ MARKETPLACE = "play_store"
 # Material statuses safe to publish. RMS also has "draft" — work in progress that
 # has not been signed off, so it is excluded unless --include-draft is passed.
 PUBLISHABLE_STATUSES = {"submitted", "scheduled", "approved", "released"}
+
+# OPPO and Transsion have no public upload API; their manual submission forms
+# want screenshots at exactly this size. Resized copies land in a separate
+# Manual_<w>x<h>_<cycle> folder — deliberately NOT matching the
+# RMS_Materials_*/GPS_Content_Retrieval_* patterns, so the store uploaders can
+# never auto-discover it. Originals are untouched.
+MANUAL_SCREENSHOT_SIZE = (480, 854)
 
 
 def api(path, method="GET", params=None, body=None):
@@ -138,7 +155,22 @@ def sniff_ext(data, fallback):
     return fallback
 
 
-def save_material(item, package_dir):
+def resize_screenshot(data, size=MANUAL_SCREENSHOT_SIZE):
+    """Scale and center-crop image bytes to exactly `size`, preserving aspect
+    ratio (source screenshots are ~9:16, so the crop is minimal). Returns
+    (bytes, extension); PNG stays PNG, everything else becomes JPEG."""
+    img = Image.open(io.BytesIO(data))
+    fmt = "PNG" if img.format == "PNG" else "JPEG"
+    method = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+    img = ImageOps.fit(img, size, method=method)
+    if fmt == "JPEG" and img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, fmt, quality=90)
+    return buf.getvalue(), (".png" if fmt == "PNG" else ".jpeg")
+
+
+def save_material(item, package_dir, resized_dir=None):
     lang = item["material_language"]
 
     for kind, key, single in [("icon", "material_app_icon", True),
@@ -154,6 +186,14 @@ def save_material(item, package_dir):
             print(f"    {file_name}")
             with open(os.path.join(package_dir, file_name), "wb") as f:
                 f.write(data)
+
+            # Only screenshots: icons and feature graphics have their own
+            # dimensions and would be mangled by a 480x854 fit.
+            if resized_dir and kind == "phoneScreenshots":
+                resized, ext = resize_screenshot(data)
+                os.makedirs(resized_dir, exist_ok=True)
+                with open(os.path.join(resized_dir, f"{lang}_{kind}_{n}{ext}"), "wb") as f:
+                    f.write(resized)
 
     # Same keys the androidpublisher listings response carries, so the uploaders
     # read this identically to a GPS_Content_Retrieval listing.txt.
@@ -177,6 +217,9 @@ def main():
                         help="parent output directory (default: this release's folder)")
     parser.add_argument("--include-draft", action="store_true",
                         help="also download materials still in draft (excluded by default)")
+    parser.add_argument("--no-resize", action="store_true",
+                        help="skip the 480x854 screenshot copies for OPPO/Transsion "
+                             "manual submission")
     parser.add_argument("--dry-run", action="store_true",
                         help="report which regions have publishable material, download nothing")
     args = parser.parse_args()
@@ -209,6 +252,16 @@ def main():
     out_root = os.path.join(os.path.expanduser(out), f"RMS_Materials_{release_cycle}")
     # Printed before downloading so a wrong destination is obvious immediately.
     print(f"Writing to {out_root}")
+
+    resized_root = None
+    if not args.no_resize:
+        if Image is None:
+            sys.exit("Pillow is needed for the 480x854 screenshot copies: "
+                     "pip3 install Pillow — or pass --no-resize to skip them.")
+        w, h = MANUAL_SCREENSHOT_SIZE
+        resized_root = os.path.join(os.path.expanduser(out),
+                                    f"Manual_{w}x{h}_{release_cycle}")
+        print(f"Resized screenshots ({w}x{h}, for OPPO/Transsion) to {resized_root}")
 
     if args.dry_run:
         print("\nDry run — nothing will be downloaded.\n")
@@ -266,8 +319,9 @@ def main():
 
         package_dir = os.path.join(out_root, package_name)
         os.makedirs(package_dir, exist_ok=True)
+        resized_dir = os.path.join(resized_root, package_name) if resized_root else None
 
-        listings = [save_material(item, package_dir) for item in items]
+        listings = [save_material(item, package_dir, resized_dir) for item in items]
         with open(os.path.join(package_dir, "listing.txt"), "w", encoding="utf-8") as f:
             f.write(json.dumps({"kind": "androidpublisher#listingsListResponse",
                                 "listings": listings}, ensure_ascii=False))

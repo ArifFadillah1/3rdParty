@@ -24,7 +24,7 @@ except ImportError:
     stub = types.ModuleType("credentials")
     stub.RMS_AUTH_COOKIE = "test-cookie"
     sys.modules["credentials"] = stub
-from retrieve_rms_materials import sniff_ext
+from retrieve_rms_materials import sniff_ext, resize_screenshot
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -249,3 +249,41 @@ def test_check_package_only_demanded_languages_checked(tmp_path):
 ])
 def test_sniff_ext(data, expected):
     assert sniff_ext(data, ".fallback") == expected
+
+
+# ── resize_screenshot (retrieve_rms_materials) ───────────────────────
+
+PIL = pytest.importorskip("PIL")
+from PIL import Image  # noqa: E402
+
+
+def _image_bytes(size, fmt, mode="RGB"):
+    import io
+    buf = io.BytesIO()
+    Image.new(mode, size, (200, 100, 50) if mode == "RGB" else None).save(buf, fmt)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("src_size", [(1080, 1920), (480, 854), (900, 1600), (2000, 1000)])
+def test_resize_screenshot_hits_exact_target(src_size):
+    import io
+    out, ext = resize_screenshot(_image_bytes(src_size, "JPEG"))
+    assert ext == ".jpeg"
+    assert Image.open(io.BytesIO(out)).size == (480, 854)
+
+
+def test_resize_screenshot_png_stays_png():
+    import io
+    out, ext = resize_screenshot(_image_bytes((1080, 1920), "PNG"))
+    assert ext == ".png"
+    assert Image.open(io.BytesIO(out)).format == "PNG"
+
+
+def test_resize_screenshot_rgba_source_converts_for_jpeg():
+    import io
+    buf = io.BytesIO()
+    Image.new("RGBA", (1080, 1920)).save(buf, "WEBP")  # webp keeps alpha
+    out, ext = resize_screenshot(buf.getvalue())
+    assert ext == ".jpeg"
+    img = Image.open(io.BytesIO(out))
+    assert img.format == "JPEG" and img.size == (480, 854)
