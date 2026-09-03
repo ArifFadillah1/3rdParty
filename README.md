@@ -92,6 +92,16 @@ uploaded.
   app-release.shopee.io, copy the fresh `RMS_AUTH` cookie from DevTools into
   `credentials.py`.
 
+## Tests
+
+```bash
+pip3 install pytest && python3 -m pytest
+```
+
+Covers the pure logic every upload run depends on (`release_config.py`:
+build lookup, region resolution, package preflight; plus image sniffing).
+No network or credentials needed.
+
 ## GitHub mirror
 
 This repo's history contains old credentials and is never pushed to GitHub.
