@@ -44,6 +44,9 @@ release_config.apply_args(args)
 if args.submit is not None:
     AUTO_SUBMIT = args.submit
 
+if RELEASE_TYPE not in (1, 3):
+    raise SystemExit(f"RELEASE_TYPE must be 1 (full release) or 3 (phased), got {RELEASE_TYPE!r}")
+
 file_path = release_config.root()
 app_version = release_config.VERSION
 

@@ -11,7 +11,7 @@ service_account_id = SAMSUNG_SERVICE_ACCOUNT_ID
 # ── Per-run switches (cycle, version and paths live in release_config.py) ──
 UPLOAD_BUNDLE = True       # push the APK
 UPLOAD_MATERIALS = True    # push icon, screenshots and listing text
-AUTO_SUBMIT = True         # submit for review
+AUTO_SUBMIT = False         # submit for review
 
 STORE = "Samsung"
 STORE_DIR = "SAMSUNG"
@@ -322,6 +322,10 @@ if release_config.DRY_RUN or not ready:
 total_apps = len(active_apps)
 count = 0
 
+# Apps whose metadata or binary update failed. Auto-submit skips these:
+# submitting anyway would send Samsung whatever stale state is staged.
+update_failed = set()
+
 # ── Auth ───────────────────────────────────────────────────────────────
 print("\n[Auth] Obtaining access token...", end=" ", flush=True)
 
@@ -431,6 +435,8 @@ for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
             screenshot_key_list
         )
         metadata_ok = log_update_result(response, "Metadata update")
+        if not metadata_ok:
+            update_failed.add(app_content_id)
 
     if UPLOAD_BUNDLE:
         if metadata_ok:
@@ -442,7 +448,8 @@ for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
                 package_name,
                 build_key
             )
-            log_update_result(binary_response, "Binary update")
+            if not log_update_result(binary_response, "Binary update"):
+                update_failed.add(app_content_id)
         else:
             print("  Skipping binary update due to metadata update failure")
 
@@ -455,6 +462,10 @@ if AUTO_SUBMIT:
     print("\n[Submit] Auto-submitting...")
     for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
         package_name = app_content["package_name"]
+        if app_content_id in update_failed:
+            print(f"  [{idx}/{total_apps}] {package_name}: SKIPPED — an update failed "
+                  f"earlier; fix it and rerun with --regions {app_content['region']} --submit")
+            continue
         response = requests.request(
             "POST", CONTENT_SUBMIT_API,
             headers={'Content-Type': 'application/json',
