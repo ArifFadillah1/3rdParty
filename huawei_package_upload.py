@@ -27,6 +27,11 @@ PHASE_RELEASE_DESC = "Phased Release"
 suffix = "apk"
 waiting_time = 60
 
+# (connect, read) timeouts in seconds. Uploads get a long read timeout because
+# Huawei only answers once it has received and parsed the whole file.
+API_TIMEOUT = (10, 60)
+UPLOAD_TIMEOUT = (10, 900)
+
 STORE = "Huawei"
 STORE_DIR = "HUAWEI"
 
@@ -136,7 +141,7 @@ def _upload_with_progress(upload_url, payload, fh, filename, prefix):
     s = requests.Session()
     prep = s.prepare_request(requests.Request("POST", upload_url, data=payload, files=files))
     prep.body = _UploadProgress(prep.body, prefix)
-    resp = s.send(prep)
+    resp = s.send(prep, timeout=UPLOAD_TIMEOUT)
     s.close()
     return resp
 
@@ -183,6 +188,18 @@ ready = release_config.report_preflight(findings, STORE, verbose=release_config.
 if release_config.DRY_RUN or not ready:
     raise SystemExit(0 if ready else 1)
 
+# Apps that failed any step this run. Later stages skip them, auto-submit
+# refuses them, and the run ends non-zero with a ready-made rerun command —
+# so one region's failure no longer kills or taints the rest of the release.
+failed_apps = {}  # app_id -> region
+
+
+def _fail(app_id, app, stage, exc=None):
+    failed_apps[app_id] = app["region"]
+    if exc is not None:
+        print(f"\n  FAILED during {stage} — {type(exc).__name__}: {exc}")
+        print("  Continuing with the remaining apps.")
+
 
 for account in accounts:
     client_id = account["client_id"]
@@ -204,9 +221,17 @@ for account in accounts:
         'Content-Type': 'application/json'
     }
 
-    response = requests.request("POST", url, headers=headers, data=payload)
-    response.raise_for_status()
-    token = response.json()["access_token"]
+    try:
+        response = requests.request("POST", url, headers=headers, data=payload,
+                                    timeout=API_TIMEOUT)
+        response.raise_for_status()
+        token = response.json()["access_token"]
+    except Exception as exc:
+        print(f"\nAccount {client_id}: token request FAILED — {exc}")
+        print("Skipping this account's apps; any other account still runs.")
+        for app_id, app in app_id_dic.items():
+            failed_apps[app_id] = app["region"]
+        continue
 
     print(f"\n{'─' * 56}")
     print(f"Account  {client_id}  ({len(app_id_dic)} app{'s' if len(app_id_dic) > 1 else ''})")
@@ -214,9 +239,12 @@ for account in accounts:
 
     # Check if need to update app presence
     if UPLOAD_MATERIALS:
-        for app_id in app_id_dic:
-            lang_list = app_id_dic.get(app_id).get("langs")
-            package_name = app_id_dic.get(app_id).get("package_name")
+        def upload_app_materials(app_id, app):
+            """Push one app's listing text, icon and screenshots. Returns False
+            when any step reported FAILED, so the caller can gate submit on it."""
+            ok = True
+            lang_list = app["langs"]
+            package_name = app["package_name"]
 
             print(f"\n[{app_id}] {package_name}")
 
@@ -245,7 +273,7 @@ for account in accounts:
                     # campaign names ("Shopee 8.8 Merdeka Sale") that go stale
                     # between upload and Huawei's approval. Off by default, so
                     # AppGallery keeps the stable name from app_id_dic.
-                    app_name = app_id_dic[app_id].get("app_name", "Shopee")
+                    app_name = app.get("app_name", "Shopee")
                     if USE_LISTING_TITLE:
                         app_name = (lang_listing.get("title") or "").strip() or app_name
                     payload = json.dumps({
@@ -255,7 +283,7 @@ for account in accounts:
                         "briefInfo":lang_listing.get("shortDescription")
                     })
 
-                    response = requests.request("PUT", url, headers=headers, data=payload)
+                    response = requests.request("PUT", url, headers=headers, data=payload, timeout=API_TIMEOUT)
                     response.raise_for_status()
                     # Huawei reports failures as a ret code inside a 200, so
                     # raise_for_status alone used to print OK over any error.
@@ -264,6 +292,7 @@ for account in accounts:
                         print(f"  App info ({lang}) .. OK  ({app_name})")
                     else:
                         print(f"  App info ({lang}) .. FAILED  {ret.get('code')}: {ret.get('msg')}")
+                        ok = False
 
                     # Update App Icon
                     for filename in os.listdir(_gps_dir(package_name)):
@@ -282,7 +311,7 @@ for account in accounts:
                                 'Authorization': 'Bearer ' + token
                             }
 
-                            response = requests.request("GET", upload_url_req, headers=headers)
+                            response = requests.request("GET", upload_url_req, headers=headers, timeout=API_TIMEOUT)
                             response.raise_for_status()
                             check_huawei_api(response)
 
@@ -294,7 +323,7 @@ for account in accounts:
                                        'parseType': '1'}
                             with open(f, 'rb') as icon_fh:
                                 files = [('file', (filename, icon_fh, 'application/octet-stream'))]
-                                response = requests.request("POST", upload_url, headers={}, data=payload, files=files)
+                                response = requests.request("POST", upload_url, headers={}, data=payload, files=files, timeout=UPLOAD_TIMEOUT)
                             response.raise_for_status()
 
                             rsp = response.json()["result"]["UploadFileRsp"]
@@ -323,15 +352,18 @@ for account in accounts:
                                     'Authorization': 'Bearer ' + token
                                 }
 
-                                response = requests.request("PUT", link_url, headers=headers, data=json.dumps(link_payload))
+                                response = requests.request("PUT", link_url, headers=headers, data=json.dumps(link_payload),
+                                                        timeout=API_TIMEOUT)
                                 response.raise_for_status()
                                 ret = response.json().get("ret", {})
                                 if ret.get("code", 0) == 0:
                                     print(f"  Icon .. OK ({file_resolution})")
                                 else:
                                     print(f"  Icon .. FAILED (code={ret.get('code')}: {ret.get('msg')})")
+                                    ok = False
                             else:
                                 print(f"  Icon .. Upload FAILED")
+                                ok = False
 
                     #Update App Screenshots
                     for filename in os.listdir(_gps_dir(package_name)):
@@ -357,7 +389,7 @@ for account in accounts:
                             'Authorization': 'Bearer ' + token
                         }
 
-                        response = requests.request("GET", url, headers=headers)
+                        response = requests.request("GET", url, headers=headers, timeout=API_TIMEOUT)
                         if response.status_code != 200:
                             print(f"\n    Screenshot upload-url GET {response.status_code}: {response.text[:300]}")
                         response.raise_for_status()
@@ -375,7 +407,7 @@ for account in accounts:
                                    'parseType': '1'}
                         with open(screenshot_local_file, 'rb') as shot_fh:
                             files = [('file', (file_full_path.name, shot_fh, 'application/octet-stream'))]
-                            response = requests.request("POST", upload_url, headers={}, data=payload, files=files)
+                            response = requests.request("POST", upload_url, headers={}, data=payload, files=files, timeout=UPLOAD_TIMEOUT)
 
                         response.raise_for_status()
 
@@ -407,7 +439,7 @@ for account in accounts:
                         'Authorization': 'Bearer ' + token
                     }
 
-                    response = requests.request("PUT", url, headers=headers, data=payload)
+                    response = requests.request("PUT", url, headers=headers, data=payload, timeout=API_TIMEOUT)
                     response.raise_for_status()
                     ok_count = len(screenshot_remote_file_list)
                     ret = response.json().get("ret", {})
@@ -415,15 +447,26 @@ for account in accounts:
                         link_status = "OK" if not failed_screenshots else f"FAILED: {', '.join(failed_screenshots)}"
                     else:
                         link_status = f"FAILED (code={ret.get('code')}: {ret.get('msg')})"
+                    if link_status != "OK":
+                        ok = False
                     print(f'\r  Screenshots  {ok_count}/{total_screenshots} linked .. {link_status}{" " * 10}')
+            return ok
 
+        for app_id, app in app_id_dic.items():
+            try:
+                if not upload_app_materials(app_id, app):
+                    _fail(app_id, app, "materials")
+            except Exception as exc:
+                _fail(app_id, app, "materials", exc)
 
     # App bundle upload
     if UPLOAD_BUNDLE:
-        for app_id in app_id_dic:
-            file_name = app_id_dic.get(app_id).get("bundle")
+        def upload_app_bundle(app_id, app):
+            """Upload and link one APK. Returns False when a step reported FAILED."""
+            ok = True
+            file_name = app["bundle"]
             full_file_path = _bundle_path(file_name)
-            package_name = app_id_dic.get(app_id).get("package_name")
+            package_name = app["package_name"]
 
             if not UPLOAD_MATERIALS:
                 print(f"\n[{app_id}] {package_name}")
@@ -435,7 +478,7 @@ for account in accounts:
                 'Authorization': 'Bearer ' + token
             }
 
-            response = requests.request("GET", url, headers=headers)
+            response = requests.request("GET", url, headers=headers, timeout=API_TIMEOUT)
             response.raise_for_status()
             check_huawei_api(response)
 
@@ -468,7 +511,7 @@ for account in accounts:
                     'Authorization': 'Bearer ' + token
                 }
 
-                response = requests.request("PUT", url, headers=headers, data=payload)
+                response = requests.request("PUT", url, headers=headers, data=payload, timeout=API_TIMEOUT)
                 response.raise_for_status()
                 # A failed link is reported as a ret code inside a 200, so this
                 # used to print OK for a bundle that never attached to the app.
@@ -477,10 +520,23 @@ for account in accounts:
                     print(f'\r          Upload & link .. OK{" " * 30}')
                 else:
                     print(f'\r          Link FAILED  {ret.get("code")}: {ret.get("msg")}{" " * 10}')
+                    ok = False
             else:
                 print(f'\r          Upload FAILED{" " * 30}')
+                ok = False
+            return ok
 
-        if AUTO_SUBMIT:
+        for app_id, app in app_id_dic.items():
+            if app_id in failed_apps:
+                print(f"\n[{app_id}] {app['package_name']}  bundle SKIPPED — an earlier step failed")
+                continue
+            try:
+                if not upload_app_bundle(app_id, app):
+                    _fail(app_id, app, "bundle")
+            except Exception as exc:
+                _fail(app_id, app, "bundle", exc)
+
+        if AUTO_SUBMIT and any(a not in failed_apps for a in app_id_dic):
             print(f"\n  Waiting {waiting_time}s for Huawei to parse package...")
             time.sleep(waiting_time)
 
@@ -488,6 +544,13 @@ for account in accounts:
     if AUTO_SUBMIT:
         release_label = "Full Release" if RELEASE_TYPE == 1 else f"Phased {PHASE_RELEASE_PERCENTAGE}%"
         for app_id in app_id_dic:
+            # Never submit an app whose upload or link failed — Huawei would
+            # send whatever stale draft is staged for review.
+            if app_id in failed_apps:
+                print(f"  Submit SKIPPED for {app_id_dic[app_id]['package_name']} — an earlier "
+                      f"step failed; fix it and rerun with --regions "
+                      f"{app_id_dic[app_id]['region']} --submit")
+                continue
             url = "https://connect-api.cloud.huawei.com/api/publish/v2/app-submit?appId=" + app_id + "&releaseType=" + str(RELEASE_TYPE)
 
             headers = {
@@ -502,13 +565,28 @@ for account in accounts:
                 "phasedReleasePercent":PHASE_RELEASE_PERCENTAGE,
                 "phasedReleaseDescription":PHASE_RELEASE_DESC
             })
-            if RELEASE_TYPE == 1:
-                response = requests.request("POST", url, headers=headers)
-            elif RELEASE_TYPE == 3:
-                response = requests.request("POST", url, headers=headers, data=payload)
-
-            ret = response.json().get("ret", {})
+            try:
+                if RELEASE_TYPE == 1:
+                    response = requests.request("POST", url, headers=headers,
+                                                timeout=API_TIMEOUT)
+                else:
+                    response = requests.request("POST", url, headers=headers, data=payload,
+                                                timeout=API_TIMEOUT)
+                ret = response.json().get("ret", {})
+            except Exception as exc:
+                ret = {"code": type(exc).__name__, "msg": str(exc)}
             if ret.get("code", 0) == 0:
                 print(f"  Submit ({release_label}) .. OK")
             else:
                 print(f"  Submit ({release_label}) .. FAILED  {ret.get('code')}: {ret.get('msg')}")
+                failed_apps[app_id] = app_id_dic[app_id]["region"]
+
+# ── Outcome ────────────────────────────────────────────────────────────
+print()
+if failed_apps:
+    rerun = ",".join(dict.fromkeys(failed_apps.values()))
+    print(f"{len(failed_apps)} app(s) FAILED: {rerun}")
+    print(f"Fix and rerun just those with:  python3 huawei_package_upload.py --regions {rerun}"
+          + (" --submit" if AUTO_SUBMIT else ""))
+    raise SystemExit(1)
+print(f"Done — {len(selected_regions)} region(s) processed with no failures.")

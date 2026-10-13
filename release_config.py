@@ -119,6 +119,20 @@ def bundle_path(store_dir, bundle_name, release_root=None):
     raise FileNotFoundError(f"No build found for {bundle_name} under {release_root}")
 
 
+def version_code(version):
+    """Samsung versionCode for a build version, e.g. "3.80.37" -> "38037".
+
+    This must equal the versionCode inside the APK's own manifest — Samsung
+    ties the record to the binary — and Jenkins bakes it in as the version
+    with the dots stripped, so that is what we derive. Note the scheme is only
+    monotonic while segment digit counts stay stable ("3.81.5" -> 3815 would
+    go backwards from 38037); that holds because the APK's own versionCode has
+    the same property. If the build system ever changes its versionCode
+    scheme, this must change with it.
+    """
+    return version.replace(".", "")
+
+
 # ── Regions ────────────────────────────────────────────────────────────
 def resolve_regions(supported, store):
     """Decide which regions this store should process.
@@ -212,16 +226,21 @@ def check_package(package_dir, languages, min_screenshots=1, max_screenshots=Non
     except (ValueError, OSError) as exc:
         return [f"{package}/listing.txt unreadable: {exc}"]
 
-    available = {e.get("language") for e in listings if e.get("language")}
+    by_lang = {e.get("language"): e for e in listings if e.get("language")}
     files = [f for f in os.listdir(package_dir)
              if os.path.isfile(os.path.join(package_dir, f))]
 
     problems = []
     for lang in languages:
-        if lang not in available:
+        entry = by_lang.get(lang)
+        if entry is None:
             problems.append(f"{lang}: not in listing.txt "
-                            f"(has: {', '.join(sorted(available)) or 'nothing'})")
+                            f"(has: {', '.join(sorted(by_lang)) or 'nothing'})")
             continue
+        # Both stores push fullDescription. RMS can hand back null, and a null
+        # here used to crash the Samsung run after uploads had already started.
+        if not (entry.get("fullDescription") or "").strip():
+            problems.append(f"{lang}: listing.txt has no fullDescription")
         if not [f for f in files if lang in f and "icon" in f]:
             problems.append(f"{lang}: no icon file")
         shots = [f for f in files if lang in f and "phoneScreenshots" in f]

@@ -16,6 +16,11 @@ AUTO_SUBMIT = False         # submit for review
 STORE = "Samsung"
 STORE_DIR = "SAMSUNG"
 
+# (connect, read) timeouts in seconds. Uploads get a long read timeout because
+# Samsung only answers once it has received and parsed the whole file.
+API_TIMEOUT = (10, 60)
+UPLOAD_TIMEOUT = (10, 900)
+
 parser = argparse.ArgumentParser(
     description="Upload Shopee builds and marketing materials to the Samsung Galaxy Store.")
 release_config.add_release_args(parser)
@@ -49,7 +54,8 @@ def _ver(region):
     return version_overrides.get(region, app_version)
 
 def _ver_code(region):
-    return _ver(region).replace(".", "")
+    # Must match the APK manifest's versionCode — see release_config.version_code.
+    return release_config.version_code(_ver(region))
 
 
 def _gps_dir(package_name):
@@ -67,7 +73,9 @@ app_content_dic = {
         "bundle": f"shopee-indonesia-release-samsung-{_ver('id')}.apk",
         "region": "id",
         "package_name": "com.shopee.id",
-        "app_title": "8.8 Shopee Live Maraton",
+        # Evergreen fallback only — the RMS listing title overrides this when
+        # present. Was a stale campaign name ("8.8 Shopee Live Maraton").
+        "app_title": "Shopee ID: Belanja Online",
         "default_language": "IND"
     },
     "000004313569": {
@@ -170,7 +178,7 @@ def upload_file_to_samsung(full_path, label=None, pbar=None):
         'Authorization': 'Bearer ' + access_token
     }
     r = requests.request("POST", "https://devapi.samsungapps.com/seller/createUploadSessionId",
-                         headers=headers)
+                         headers=headers, timeout=API_TIMEOUT)
     session_id = samsung_json(r, ["sessionId"], "Create upload session")
 
     file_name = os.path.basename(full_path)
@@ -196,7 +204,7 @@ def upload_file_to_samsung(full_path, label=None, pbar=None):
         pbar = own_pbar
 
     prep.body = _BodyProgressReader(prep.body, pbar)
-    response = s.send(prep)
+    response = s.send(prep, timeout=UPLOAD_TIMEOUT)
     s.close()
 
     if own_pbar is not None:
@@ -248,7 +256,7 @@ def update_app_metadata(content_id, app_title, default_language, long_descriptio
         headers={'Content-Type': 'application/json',
                  'service-account-id': service_account_id,
                  'Authorization': 'Bearer ' + access_token},
-        data=json.dumps(payload)
+        data=json.dumps(payload), timeout=API_TIMEOUT
     )
     return response
 
@@ -273,7 +281,7 @@ def update_app_binary(content_id, build_name, v_code, v_no, package_name, build_
         headers={'Content-Type': 'application/json',
                  'service-account-id': service_account_id,
                  'Authorization': 'Bearer ' + access_token},
-        data=json.dumps(payload)
+        data=json.dumps(payload), timeout=API_TIMEOUT
     )
     return response
 
@@ -341,7 +349,7 @@ encoded_jwt = jwt.encode(jwt_payload, secret, algorithm="RS256")
 response = requests.request(
     "POST", "https://devapi.samsungapps.com/auth/accessToken",
     headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + encoded_jwt},
-    data={}
+    data={}, timeout=API_TIMEOUT
 )
 access_token = samsung_json(response, ["createdItem", "accessToken"], "Samsung auth")
 print("OK")
@@ -349,7 +357,9 @@ print("OK")
 # ── Upload ─────────────────────────────────────────────────────────────
 # One pass, with each flag gating its own calls. The order of the API calls is
 # unchanged: images, then the APK file, then metadata, then the binary record.
-for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
+# Each app runs in its own try/except (see the loop below the function), so one
+# region's failure no longer kills the rest of the release run.
+def process_app(idx, app_content_id, app_content):
     package_name = app_content["package_name"]
     region = app_content["region"]
     default_language = app_content["default_language"]
@@ -373,7 +383,8 @@ for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
                 "https://devapi.samsungapps.com/seller/contentInfo?contentId=" + app_content_id,
                 headers={'Content-Type': 'application/json',
                          'service-account-id': service_account_id,
-                         'Authorization': 'Bearer ' + access_token}
+                         'Authorization': 'Bearer ' + access_token},
+                timeout=API_TIMEOUT
             )
             _ = len(json.loads(r.text)[0]["screenshots"])
         except Exception:
@@ -394,7 +405,8 @@ for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
         if listing_title:
             app_title = listing_title
         print(f"  Title  {app_title}")
-        app_desc = lang_listing.get("fullDescription", "").replace("--", "==")
+        # `or ""` also covers an explicit null, which .get(key, default) does not.
+        app_desc = (lang_listing.get("fullDescription") or "").replace("--", "==")
         short_desc = lang_listing.get("shortDescription")
         if isinstance(short_desc, str):
             short_desc = short_desc.replace("--", "==")
@@ -453,7 +465,15 @@ for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
         else:
             print("  Skipping binary update due to metadata update failure")
 
-    count += 1
+
+for idx, (app_content_id, app_content) in enumerate(active_apps, 1):
+    try:
+        process_app(idx, app_content_id, app_content)
+        count += 1
+    except Exception as exc:
+        update_failed.add(app_content_id)
+        print(f"\n  FAILED — {type(exc).__name__}: {exc}")
+        print("  Continuing with the remaining apps.")
 
 print(f"\nDone. {count}/{total_apps} apps processed.")
 
@@ -471,7 +491,7 @@ if AUTO_SUBMIT:
             headers={'Content-Type': 'application/json',
                      'service-account-id': service_account_id,
                      'Authorization': 'Bearer ' + access_token},
-            data=json.dumps({"contentId": app_content_id})
+            data=json.dumps({"contentId": app_content_id}), timeout=API_TIMEOUT
         )
         if response.ok:
             result = "OK"
@@ -481,4 +501,14 @@ if AUTO_SUBMIT:
                 result = f"FAILED ({response.status_code}{': ' + msg if msg else ''})"
             except Exception:
                 result = f"FAILED ({response.status_code})"
+            update_failed.add(app_content_id)
         print(f"  [{idx}/{total_apps}] {package_name}: {result}")
+
+# ── Outcome ────────────────────────────────────────────────────────────
+if update_failed:
+    failed_regions = ",".join(dict.fromkeys(
+        app_content_dic[cid]["region"] for cid in update_failed))
+    print(f"\n{len(update_failed)} app(s) had failures: {failed_regions}")
+    print(f"Fix and rerun just those with:  python3 samsung_package_upload.py "
+          f"--regions {failed_regions}" + (" --submit" if AUTO_SUBMIT else ""))
+    raise SystemExit(1)

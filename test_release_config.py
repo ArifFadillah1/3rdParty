@@ -40,12 +40,14 @@ def release_root(tmp_path, monkeypatch):
     return root
 
 
-def write_package(pkg_dir, lang="id", icons=1, screenshots=2, listing_langs=None):
+def write_package(pkg_dir, lang="id", icons=1, screenshots=2, listing_langs=None,
+                  description="A description"):
     """A materials package folder as retrieve_rms_materials.py would write it."""
     pkg_dir.mkdir(parents=True, exist_ok=True)
     listing_langs = listing_langs if listing_langs is not None else [lang]
     (pkg_dir / "listing.txt").write_text(json.dumps(
-        {"listings": [{"language": l, "title": "T"} for l in listing_langs]}))
+        {"listings": [{"language": l, "title": "T", "fullDescription": description}
+                      for l in listing_langs]}))
     for n in range(1, icons + 1):
         (pkg_dir / f"{lang}_icon_{n}.png").write_bytes(b"x")
     for n in range(1, screenshots + 1):
@@ -229,12 +231,36 @@ def test_check_package_screenshot_bounds(tmp_path):
                                         min_screenshots=1, max_screenshots=8) == []
 
 
+@pytest.mark.parametrize("description", [None, "", "   "])
+def test_check_package_missing_description_blocks(tmp_path, description):
+    # RMS can hand back a null/empty description; both stores push it, and a
+    # null used to crash the Samsung run after uploads had already started.
+    pkg = write_package(tmp_path / "com.shopee.id", description=description)
+    problems = release_config.check_package(str(pkg), ["id"])
+    assert any("fullDescription" in p for p in problems)
+
+
 def test_check_package_only_demanded_languages_checked(tmp_path):
     # en-US listed but has no files; asking only for th must not flag en-US
     pkg = write_package(tmp_path / "com.shopee.th", lang="th",
                         listing_langs=["th", "en-US"])
     assert release_config.check_package(str(pkg), ["th"]) == []
     assert release_config.check_package(str(pkg), ["th", "en-US"])
+
+
+# ── version_code (Samsung) ───────────────────────────────────────────
+
+def test_version_code_strips_dots():
+    assert release_config.version_code("3.80.37") == "38037"
+
+
+def test_version_code_scheme_is_a_conscious_choice():
+    # Deliberately asserts the hazard: dot-stripping is NOT monotonic across
+    # digit-count changes (3815 < 38037). That is fine only because the value
+    # must mirror the APK manifest's versionCode, which Jenkins derives the
+    # same way. If this test is in your way, you are changing the scheme —
+    # make sure the APKs changed with you.
+    assert release_config.version_code("3.81.5") == "3815"
 
 
 # ── sniff_ext (retrieve_rms_materials) ───────────────────────────────

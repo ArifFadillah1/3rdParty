@@ -28,9 +28,9 @@ internal App Release platform (RMS).
    ]
 
    SAMSUNG_SERVICE_ACCOUNT_ID = "..."
-   SAMSUNG_PRIVATE_KEY = """-----BEGIN PRIVATE KEY-----
-   ...
-   -----END PRIVATE KEY-----"""
+   SAMSUNG_PRIVATE_KEY = """<the full RSA private-key PEM block>"""
+   # (sync_github.sh refuses to push anything that looks like a real PEM
+   #  header, so this README deliberately avoids spelling one out)
    ```
 
 3. Release folders live at `~/Documents/Python/3rdPartyApp/<cycle>/`, with the
@@ -87,8 +87,9 @@ uploaded.
 - **Huawei**: `AUTO_SUBMIT` is **off** by default (top of the script) — uploads
   land as drafts to submit manually. Store titles are pinned in the script
   (`USE_LISTING_TITLE = False`) because listing titles carry campaign names.
-- **Samsung**: `AUTO_SUBMIT` is **on** by default — a real run submits for
-  review. Only each app's `default_language` listing is pushed.
+- **Samsung**: `AUTO_SUBMIT` is **off** by default too — uploads land as drafts;
+  pass `--submit` to submit for review. Only each app's `default_language`
+  listing is pushed.
 - **OPPO / Transsion**: no public API — submit manually in each store's web
   form, using the 480x854 screenshots from `Manual_480x854_<cycle>/` that the
   retrieval step writes automatically (`--no-resize` skips them). Originals
