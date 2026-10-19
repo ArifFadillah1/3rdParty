@@ -23,8 +23,8 @@ import os
 import sys
 
 # ── Edit these two per release ─────────────────────────────────────────
-CYCLE = "3.80"        # release cycle: names the release folder, drives the RMS query
-VERSION = "3.80.37"   # build version: what the stores actually see
+CYCLE = "3.83"        # release cycle: names the release folder, drives the RMS query
+VERSION = "3.83.38"   # build version: what the stores actually see
 
 # Regions to ship.
 #   None  → every region the store being run carries

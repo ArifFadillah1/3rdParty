@@ -40,6 +40,7 @@ app_version = release_config.VERSION
 
 # Per-region version overrides, for when one region ships a different build
 version_overrides = {
+    "th": "3.83.36",
     # "id": "3.75.28",
     # "my": "3.76.27",
     # "vn": "3.74.34",
