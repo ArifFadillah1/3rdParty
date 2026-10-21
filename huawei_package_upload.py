@@ -13,10 +13,10 @@ from credentials import HUAWEI_ACCOUNTS
 UPLOAD_BUNDLE = True       # push the APK
 UPLOAD_MATERIALS = True    # push icon, screenshots and listing text
 AUTO_SUBMIT = False        # submit for review
-# Take the AppGallery app name from listing.txt instead of the fixed name below.
-# Those are Google Play titles and currently carry campaign names, so this is off
-# unless you actually want the campaign name in the store listing.
-USE_LISTING_TITLE = False
+# Take the AppGallery app name from listing.txt (the release's per-region
+# campaign titles). Off = don't touch the name: appName is omitted and the
+# store keeps whatever it currently shows.
+USE_LISTING_TITLE = True
 # 1 = FULL RELEASE; 3 = PHASED RELEASE
 RELEASE_TYPE = 1
 PHASE_RELEASE_START_TIME = "2024-07-22T11:00:00+0800"
@@ -294,19 +294,22 @@ for account in accounts:
                         'Authorization': 'Bearer ' + token
                     }
 
-                    # listing.txt titles are Google Play titles, which carry
-                    # campaign names ("Shopee 8.8 Merdeka Sale") that go stale
-                    # between upload and Huawei's approval. Off by default, so
-                    # AppGallery keeps the stable name from app_id_dic.
-                    app_name = app.get("app_name", "Shopee")
+                    # listing.txt titles are the release's per-region names
+                    # (usually campaign names, "Shopee 10.10 Brands Festival").
+                    # With USE_LISTING_TITLE off, appName is omitted so the
+                    # store keeps its current name — the old fallback of
+                    # sending "Shopee" literally renamed every app to that.
+                    app_name = app.get("app_name")
                     if USE_LISTING_TITLE:
                         app_name = (lang_listing.get("title") or "").strip() or app_name
-                    payload = json.dumps({
+                    body = {
                         "lang": lang,
-                        "appName": app_name,
-                        "appDesc":lang_listing.get("fullDescription"),
-                        "briefInfo":lang_listing.get("shortDescription")
-                    })
+                        "appDesc": lang_listing.get("fullDescription"),
+                        "briefInfo": lang_listing.get("shortDescription")
+                    }
+                    if app_name:
+                        body["appName"] = app_name
+                    payload = json.dumps(body)
 
                     response = requests.request("PUT", url, headers=headers, data=payload, timeout=API_TIMEOUT)
                     response.raise_for_status()
@@ -314,7 +317,7 @@ for account in accounts:
                     # raise_for_status alone used to print OK over any error.
                     ret = response.json().get("ret", {})
                     if ret.get("code", 0) == 0:
-                        print(f"  App info ({lang}) .. OK  ({app_name})")
+                        print(f"  App info ({lang}) .. OK  ({app_name or 'name kept'})")
                     else:
                         print(f"  App info ({lang}) .. FAILED  {ret.get('code')}: {ret.get('msg')}")
                         ok = False
