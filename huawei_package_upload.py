@@ -4,7 +4,6 @@ import os
 import time
 
 import requests
-from pathlib import Path
 
 import release_config
 from credentials import HUAWEI_ACCOUNTS
@@ -144,6 +143,32 @@ def _upload_with_progress(upload_url, payload, fh, filename, prefix):
     resp = s.send(prep, timeout=UPLOAD_TIMEOUT)
     s.close()
     return resp
+
+
+def _obs_upload(app_id, api_headers, path):
+    """Upload one file via the OBS flow and return its objectId for binding.
+
+    Huawei moved materials to this flow (~Oct 2026): upload-url/for-obs hands
+    out a pre-signed PUT URL plus an objectId, the raw bytes go to that URL,
+    and app-file-info takes the objectId as fileDestUrl. The legacy
+    /upload-url + imageResolutionSingature flow now fails every image link
+    with 204144641 'Failed to verifySignature'.
+    """
+    size = os.path.getsize(path)
+    name = os.path.basename(path)
+    response = requests.get(
+        "https://connect-api.cloud.huawei.com/api/publish/v2/upload-url/for-obs"
+        f"?appId={app_id}&fileName={name}&contentLength={size}",
+        headers=api_headers, timeout=API_TIMEOUT)
+    response.raise_for_status()
+    check_huawei_api(response)
+    url_info = response.json()["urlInfo"]
+    with open(path, "rb") as fh:
+        response = requests.request(url_info["method"], url_info["url"],
+                                    headers=url_info["headers"], data=fh,
+                                    timeout=UPLOAD_TIMEOUT)
+    response.raise_for_status()
+    return url_info["objectId"]
 
 
 # ── Resolve this run ───────────────────────────────────────────────────
@@ -299,70 +324,34 @@ for account in accounts:
                         f = os.path.join(_gps_dir(package_name), filename)
 
                         if os.path.isfile(f) and lang in filename and "icon" in filename:
-
-                            # NOTE: Huawei support suggested ".../upload-url/icon", but that path
-                            # returns 404 — it does not exist in the API. The documented endpoint
-                            # is the generic /upload-url (same one used for the APK bundle).
-                            upload_url_req = "https://connect-api.cloud.huawei.com/api/publish/v2/upload-url?appId=" + app_id + "&suffix=png"
                             print(f"  Icon  {filename}")
 
-                            headers = {
+                            api_headers = {
                                 'client_id': client_id,
                                 'Authorization': 'Bearer ' + token
                             }
+                            object_id = _obs_upload(app_id, api_headers, f)
 
-                            response = requests.request("GET", upload_url_req, headers=headers, timeout=API_TIMEOUT)
+                            # Link App Icon File with App
+                            link_url = "https://connect-api.cloud.huawei.com/api/publish/v2/app-file-info?appId=" + app_id
+                            link_payload = {
+                                "fileType": 0,
+                                "files": [{
+                                    "fileName": filename,
+                                    "fileDestUrl": object_id,
+                                }],
+                                "lang": lang
+                            }
+                            response = requests.request(
+                                "PUT", link_url,
+                                headers={**api_headers, 'Content-Type': 'application/json'},
+                                data=json.dumps(link_payload), timeout=API_TIMEOUT)
                             response.raise_for_status()
-                            check_huawei_api(response)
-
-                            upload_url = response.json()["uploadUrl"]
-                            upload_auth_code = response.json()["authCode"]
-
-                            payload = {'authCode': upload_auth_code,
-                                       'fileCount': '1',
-                                       'parseType': '1'}
-                            with open(f, 'rb') as icon_fh:
-                                files = [('file', (filename, icon_fh, 'application/octet-stream'))]
-                                response = requests.request("POST", upload_url, headers={}, data=payload, files=files, timeout=UPLOAD_TIMEOUT)
-                            response.raise_for_status()
-
-                            rsp = response.json()["result"]["UploadFileRsp"]
-                            if rsp["ifSuccess"] == 1:
-                                file_info = rsp["fileInfoList"][0]
-                                file_uploaded_url = file_info["fileDestUlr"]
-                                file_size = file_info["size"]
-                                file_resolution = file_info.get("imageResolution", "")
-                                file_sign = file_info.get("imageResolutionSingature", "")
-
-                                # Link App Icon File with App
-                                link_url = "https://connect-api.cloud.huawei.com/api/publish/v2/app-file-info?appId=" + app_id
-                                link_payload = {
-                                    "fileType": 0,
-                                    "files": [{
-                                        "fileDestUrl": file_uploaded_url,
-                                        "size": file_size,
-                                        "imageResolution": file_resolution,
-                                        "imageResolutionSingature": file_sign,
-                                    }],
-                                    "lang": lang
-                                }
-                                headers = {
-                                    'client_id': client_id,
-                                    'Content-Type': 'application/json',
-                                    'Authorization': 'Bearer ' + token
-                                }
-
-                                response = requests.request("PUT", link_url, headers=headers, data=json.dumps(link_payload),
-                                                        timeout=API_TIMEOUT)
-                                response.raise_for_status()
-                                ret = response.json().get("ret", {})
-                                if ret.get("code", 0) == 0:
-                                    print(f"  Icon .. OK ({file_resolution})")
-                                else:
-                                    print(f"  Icon .. FAILED (code={ret.get('code')}: {ret.get('msg')})")
-                                    ok = False
+                            ret = response.json().get("ret", {})
+                            if ret.get("code", 0) == 0:
+                                print(f"  Icon .. OK")
                             else:
-                                print(f"  Icon .. Upload FAILED")
+                                print(f"  Icon .. FAILED (code={ret.get('code')}: {ret.get('msg')})")
                                 ok = False
 
                     #Update App Screenshots
@@ -374,55 +363,18 @@ for account in accounts:
 
                     screenshot_local_file_list.sort()
 
-                    failed_screenshots = []
                     total_screenshots = len(screenshot_local_file_list)
                     print(f"  Screenshots  uploading {total_screenshots} files...", end='', flush=True)
-                    for i, screenshot_local_file in enumerate(screenshot_local_file_list):
-                        file_full_path = Path(screenshot_local_file)
-                        file_extension = file_full_path.suffix
-                        # Generic /upload-url endpoint (same as icon and APK bundle). There is no
-                        # typed /upload-url/screenshot path in the API.
-                        url = "https://connect-api.cloud.huawei.com/api/publish/v2/upload-url?appId=" + app_id + "&suffix=" + file_extension.replace(".", "")
-
-                        headers = {
-                            'client_id': client_id,
-                            'Authorization': 'Bearer ' + token
-                        }
-
-                        response = requests.request("GET", url, headers=headers, timeout=API_TIMEOUT)
-                        if response.status_code != 200:
-                            print(f"\n    Screenshot upload-url GET {response.status_code}: {response.text[:300]}")
-                        response.raise_for_status()
-                        check_huawei_api(response)
-
-                        upload_url = response.json()["uploadUrl"]
-                        upload_auth_code = response.json()["authCode"]
-
-                        # parseType=1 makes Huawei parse the image and return its real
-                        # imageResolution + imageResolutionSingature, which the link step
-                        # below requires. (Previously parseType=0 with a fabricated signature,
-                        # which caused the link to fail.)
-                        payload = {'authCode': upload_auth_code,
-                                   'fileCount': '1',
-                                   'parseType': '1'}
-                        with open(screenshot_local_file, 'rb') as shot_fh:
-                            files = [('file', (file_full_path.name, shot_fh, 'application/octet-stream'))]
-                            response = requests.request("POST", upload_url, headers={}, data=payload, files=files, timeout=UPLOAD_TIMEOUT)
-
-                        response.raise_for_status()
-
-                        rsp = response.json()["result"]["UploadFileRsp"]
-                        if rsp["ifSuccess"] == 1:
-                            file_info = rsp["fileInfoList"][0]
-                            dest_url = file_info["fileDestUlr"]
-                            screenshot_remote_file_list.append({
-                                "fileDestUrl": dest_url,
-                                "size": file_info["size"],
-                                "imageResolution": file_info.get("imageResolution", ""),
-                                "imageResolutionSingature": file_info.get("imageResolutionSingature", ""),
-                            })
-                        else:
-                            failed_screenshots.append(file_full_path.name)
+                    api_headers = {
+                        'client_id': client_id,
+                        'Authorization': 'Bearer ' + token
+                    }
+                    for screenshot_local_file in screenshot_local_file_list:
+                        object_id = _obs_upload(app_id, api_headers, screenshot_local_file)
+                        screenshot_remote_file_list.append({
+                            "fileName": os.path.basename(screenshot_local_file),
+                            "fileDestUrl": object_id,
+                        })
 
                     # Link Screenshot File with App
                     url = "https://connect-api.cloud.huawei.com/api/publish/v2/app-file-info?appId=" + app_id
@@ -444,10 +396,9 @@ for account in accounts:
                     ok_count = len(screenshot_remote_file_list)
                     ret = response.json().get("ret", {})
                     if ret.get("code", 0) == 0:
-                        link_status = "OK" if not failed_screenshots else f"FAILED: {', '.join(failed_screenshots)}"
+                        link_status = "OK"
                     else:
                         link_status = f"FAILED (code={ret.get('code')}: {ret.get('msg')})"
-                    if link_status != "OK":
                         ok = False
                     print(f'\r  Screenshots  {ok_count}/{total_screenshots} linked .. {link_status}{" " * 10}')
             return ok
