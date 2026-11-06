@@ -25,7 +25,7 @@ Output:
 for materials, so a normal run needs no copying afterwards.
 
 Filenames and listing.txt match retrieve_google_play_store_info.py exactly, so
-huawei/samsung/vivo/oppo _package_upload.py consume this folder unchanged.
+huawei/samsung _package_upload.py consume this folder unchanged.
 Extensions come from sniffing the downloaded bytes (as the GPS script does via
 imghdr), so JPEGs are ".jpeg", not ".jpg". featureGraphic is an RMS-only extra;
 the uploaders ignore it because its name contains neither "icon" nor

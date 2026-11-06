@@ -1,8 +1,23 @@
-*.json
-*_private_key.txt
+# Secrets - never commit these
 credentials.py
+*_private_key.txt
+*.json
 .env
-.DS_Store
+.env.*
+
+# Python
 __pycache__/
 *.pyc
-huawei_package_upload_backup.py
+*.pyo
+venv/
+.venv/
+env/
+*.egg-info/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Logs
+*.log

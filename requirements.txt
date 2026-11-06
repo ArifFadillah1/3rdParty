@@ -1,5 +1,5 @@
 requests
 PyJWT
-cryptography
+cryptography   # not imported directly: PyJWT needs it to sign RS256 (samsung_package_upload.py)
 tqdm
-Pillow
+Pillow         # only for the 480x854 copies in retrieve_rms_materials.py (--no-resize skips them)

@@ -36,7 +36,7 @@ share.
 | `retrieve_rms_materials.py` | Downloads marketing materials for a cycle from RMS into the release folder. Has a `main()` and an `if __name__ == "__main__"` guard. |
 | `huawei_package_upload.py` | Uploads to Huawei AppGallery. Runs at module level (see Limitations). |
 | `samsung_package_upload.py` | Uploads to Samsung Galaxy Store. Runs at module level (see Limitations). |
-| `sync_github.sh` | Pushes a history-free snapshot of `main` to the public GitHub mirror, refusing if the tree looks like it contains a secret. |
+| `sync_github.sh` | Pushes `main` to the public GitHub mirror (remote `github`), refusing if the tree being pushed looks like it contains a secret. |
 | `requirements.txt` | Runtime dependencies. |
 
 ### Release folder layout
@@ -118,6 +118,11 @@ Edited at the top of each uploader, overridable per run by flags:
 
 `version_overrides` maps a region to a different build version, for when one
 region ships a build of its own.
+
+When `RELEASE_TYPE` is `3`, the Huawei script also sends the
+`PHASE_RELEASE_START_TIME`, `PHASE_RELEASE_END_TIME`, `PHASE_RELEASE_PERCENTAGE`
+and `PHASE_RELEASE_DESC` constants from the top of the script; edit those
+before a phased release.
 
 ## Running a release
 
@@ -282,6 +287,7 @@ expiry) exchanged at `/auth/accessToken`, then `/seller/createUploadSessionId`,
 
 Network timeouts are `(10, 60)` seconds for API calls and `(10, 900)` for
 uploads, since both stores only answer once the whole file has been received.
+RMS calls use a 30 s timeout and image downloads 120 s.
 
 ## Dependencies
 
@@ -291,24 +297,34 @@ uploads, since both stores only answer once the whole file has been received.
 | `PyJWT` | Signs the Samsung auth JWT (`RS256`). |
 | `cryptography` | Not imported directly — PyJWT needs it to sign RS256. |
 | `tqdm` | Progress bars in the Samsung uploader. |
-| `Pillow` | 480x854 screenshot resizing in the retrieval script. Imported defensively; only required unless `--no-resize` is passed. |
+| `Pillow` | 480x854 screenshot resizing in the retrieval script. Imported defensively; required only when the resized copies are written (i.e. unless `--no-resize` is passed). |
 
 ## GitHub mirror
 
-This repo's Git history contains credentials from before they were consolidated
-into `credentials.py`, so `main` is never pushed to the public mirror. Instead
-`sync_github.sh` builds a single history-free snapshot commit on the
-`github-main` branch whose tree is exactly `main`'s tree, and pushes that. A
-`post-commit` hook runs it on every commit to `main`.
+`main` is mirrored to the public GitHub repo (remote `github`,
+`ArifFadillah1/3rdParty`). The history on `main` is the mirror's own history —
+this clone was taken from GitHub — so `sync_github.sh` pushes `main` directly.
+`credentials.py` is untracked and can never be included.
 
 Before pushing, the script scans the tree being pushed for credential-shaped
 strings (private-key headers, client secrets, basic-auth blobs, JWTs, AWS keys)
 and refuses to push on a hit. If `gitleaks` is installed it runs that too, over
-an export of exactly that tree. A finding only skips the sync; the local commit
+an export of exactly that tree. A finding only skips the push; the local commit
 is untouched.
 
 ```bash
 ./sync_github.sh
+```
+
+A `post-commit` hook runs it after every commit on `main`. Hooks are not
+tracked, so recreate `.git/hooks/post-commit` (executable) in a fresh clone:
+
+```sh
+#!/bin/sh
+[ "$(git symbolic-ref --short -q HEAD)" = "main" ] || exit 0
+sh "$(git rev-parse --show-toplevel)/sync_github.sh" \
+  || echo "[github-sync] failed (offline?) — run ./sync_github.sh manually" >&2
+exit 0
 ```
 
 ## Known limitations
