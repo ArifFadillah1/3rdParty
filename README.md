@@ -144,8 +144,9 @@ python3 samsung_package_upload.py
 
 ### Shared flags (both uploaders)
 
-Added by `release_config.add_release_args()`, so both uploaders accept exactly
-these:
+The first five are added by `release_config.add_release_args()`; `--submit` /
+`--no-submit` are a mutually exclusive group defined in each uploader. Both
+uploaders accept exactly these:
 
 ```
 --cycle CYCLE          release cycle              (default: CYCLE in release_config.py)
@@ -207,7 +208,7 @@ reported and skipped.
 | `version_code(version)` | `(str) -> str` | Samsung versionCode: the version with dots stripped (`"3.80.37"` -> `"38037"`). Must equal the APK manifest's own versionCode. |
 | `resolve_regions(supported, store)` | `(iterable, str) -> list[str]` | Decides which regions to process. `REGIONS is None` returns every supported region, sorted; otherwise keeps the requested order, skipping and reporting regions the store does not carry. Prints the plan. **Exits** on an unknown region code, or when nothing requested is on this store. |
 | `add_release_args(parser)` | `(ArgumentParser) -> ArgumentParser` | Adds `--cycle`, `--version`, `--regions`, `--materials`, `--dry-run`. |
-| `apply_args(args)` | `(Namespace) -> None` | **Mutates the module globals** `CYCLE`, `VERSION`, `REGIONS`, `MATERIALS_DIR`, `DRY_RUN` from parsed args. Only non-empty values override; `--regions` is split on commas and lowercased. |
+| `apply_args(args)` | `(Namespace) -> None` | **Mutates the module globals** `CYCLE`, `VERSION`, `REGIONS`, `MATERIALS_DIR`, `DRY_RUN` from parsed args. Only non-empty values override `CYCLE`/`VERSION`/`REGIONS`/`MATERIALS_DIR`; `DRY_RUN` is always set from `--dry-run`. `--regions` is split on commas and lowercased. |
 | `print_header(store, materials_dir, flags="")` | `(str, str, str) -> None` | Prints the run banner (store, cycle, version, paths, flags). |
 | `check_package(package_dir, languages, min_screenshots=1, max_screenshots=None)` | `-> list[str]` | Validates one package's materials; returns a list of problems, empty when ready. Checks that `listing.txt` exists and parses, that each demanded language is present with a non-blank `fullDescription`, and that an icon and enough screenshots exist. Asset lookup mirrors the uploaders (substring match on the language code and on `icon` / `phoneScreenshots`). |
 | `report_preflight(findings, store, verbose=False)` | `(list[tuple], str, bool) -> bool` | Takes `(region, package, apk_or_None, problems)` rows. Returns `True` when every region is ready; otherwise prints each blocker and a narrowed `--regions` suggestion. `verbose=True` prints the full per-region table. |
@@ -297,7 +298,7 @@ RMS calls use a 30 s timeout and image downloads 120 s.
 | `PyJWT` | Signs the Samsung auth JWT (`RS256`). |
 | `cryptography` | Not imported directly — PyJWT needs it to sign RS256. |
 | `tqdm` | Progress bars in the Samsung uploader. |
-| `Pillow` | 480x854 screenshot resizing in the retrieval script. Imported defensively; required only when the resized copies are written (i.e. unless `--no-resize` is passed). |
+| `Pillow` | 480x854 screenshot resizing in the retrieval script. Imported defensively; required unless `--no-resize` is passed, including for `--dry-run` (the check runs before the dry-run branch). |
 
 ## GitHub mirror
 
